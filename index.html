@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vinyl Scanner</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one phone-width column. A sleeve with the record sliding out is the stage;
+   type is set like a record spine (tall condensed caps); tracks are numbered A1, B2 like a pressing. */
+:root{
+  --paper:#e6e9e7;
+  --card:#f5f7f6;
+  --ink:#14171a;
+  --muted:#586167;
+  --line:#c8cecb;
+  --label:#f5b700;
+  --on-label:#14171a;
+  --wax:#121416;
+  --groove:#2a2e31;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#111416;--card:#1a1f22;--ink:#eef1ef;--muted:#9aa5a9;--line:#2d3438;
+    --label:#f5b700;--on-label:#14171a;--wax:#060708;--groove:#24292c;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#111416;--card:#1a1f22;--ink:#eef1ef;--muted:#9aa5a9;--line:#2d3438;
+  --label:#f5b700;--on-label:#14171a;--wax:#060708;--groove:#24292c;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
+.wrap{max-width:520px;margin:0 auto;padding:16px 16px 48px;display:flex;flex-direction:column;gap:20px}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--label);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.mark{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:.04em;line-height:1;text-transform:uppercase;margin:0}
+.mark svg{width:40px;height:40px;flex:none;border-radius:9px}
+.mark b{font-weight:600;color:var(--muted)}
+
+.svc{display:flex;flex-direction:column;gap:6px}
+.svc-h{font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.seg{display:flex;gap:6px;overflow-x:auto;padding:3px 3px 8px;margin:0 -3px;scrollbar-width:thin}
+.seg label{flex:none;display:flex;align-items:center;min-height:40px;font-size:14px;font-weight:600;padding:6px 14px;border:1.5px solid var(--ink);border-radius:999px;cursor:pointer;white-space:nowrap}
+.seg input:checked+label{background:var(--ink);color:var(--paper)}
+.seg input:focus-visible+label{outline:3px solid var(--label);outline-offset:2px}
+
+/* stage */
+.stage{position:relative;aspect-ratio:1.45/1;width:100%}
+.record{position:absolute;top:4%;right:0;height:92%;aspect-ratio:1;border-radius:50%;
+  background:
+    radial-gradient(circle,var(--label) 0 17%,transparent 17.5%),
+    repeating-radial-gradient(circle,var(--wax) 0 2px,var(--groove) 2px 3px);
+  box-shadow:0 6px 18px rgba(0,0,0,.28)}
+.record::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 20deg,transparent 0 8%,rgba(255,255,255,.13) 12%,transparent 17% 55%,rgba(255,255,255,.1) 61%,transparent 66%)}
+.record::after{content:"";position:absolute;left:50%;top:50%;width:3.2%;height:3.2%;transform:translate(-50%,-50%);border-radius:50%;background:var(--paper)}
+.record.spin{animation:spin 1.8s linear infinite}
+.record.slow{animation:spin 6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sleeve{position:absolute;left:0;top:0;height:100%;aspect-ratio:1;background:var(--label);color:var(--on-label);
+  box-shadow:0 8px 22px rgba(0,0,0,.3);overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;padding:8%}
+.sleeve img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sleeve .s-artist{font-family:var(--display);font-weight:600;font-size:clamp(14px,4.4vw,22px);text-transform:uppercase;letter-spacing:.05em;overflow-wrap:anywhere}
+.sleeve .s-album{font-family:var(--display);font-weight:800;font-size:clamp(26px,9vw,46px);line-height:.92;text-transform:uppercase;overflow-wrap:anywhere}
+.tag{position:absolute;top:0;left:0;background:var(--wax);color:#fff;font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:5px 9px}
+@media (prefers-reduced-motion:reduce){.record.spin,.record.slow{animation:none}}
+
+/* actions */
+.actions{display:flex;flex-direction:column;gap:10px}
+.btn{display:flex;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:12px 18px;border-radius:14px;
+  font-family:var(--display);font-weight:800;font-size:24px;letter-spacing:.05em;text-transform:uppercase;text-decoration:none;cursor:pointer;border:2px solid var(--ink);text-align:center}
+.btn.primary{background:var(--label);color:var(--on-label);border-color:var(--on-label);box-shadow:0 4px 0 var(--ink)}
+.btn.primary:active{transform:translateY(3px);box-shadow:0 1px 0 var(--ink)}
+.btn.dark{background:var(--ink);color:var(--paper)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.quiet{flex:1 1 140px;display:flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);font:600 14px var(--body);color:var(--ink);cursor:pointer;text-align:center}
+.status{min-height:1.4em;font-size:14px;color:var(--muted);margin:0}
+.status.err{color:var(--ink);font-weight:600;border-left:4px solid var(--label);padding-left:10px}
+
+form.manual{display:none;gap:8px;flex-wrap:wrap}
+form.manual.open{display:flex}
+form.manual input{flex:1 1 140px;min-height:44px;padding:8px 12px;border:1.5px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font:16px var(--body)}
+form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2px solid var(--ink);background:var(--ink);color:var(--paper);font:600 14px var(--body);cursor:pointer}
+
+/* result */
+.result{display:flex;flex-direction:column;gap:14px}
+.meta{display:flex;flex-direction:column;gap:2px}
+.artist{font-family:var(--display);font-weight:600;font-size:20px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0}
+.album{font-family:var(--display);font-weight:800;font-size:44px;line-height:.95;text-transform:uppercase;margin:0;text-wrap:balance;overflow-wrap:anywhere}
+.sub{font-size:14px;color:var(--muted);margin:4px 0 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;border:1.5px solid var(--ink);color:var(--ink)}
+.pill.low{background:var(--label);color:var(--on-label);border-color:var(--on-label)}
+.side h3{font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.14em;text-transform:uppercase;margin:6px 0 4px;padding-bottom:4px;border-bottom:2px solid var(--ink)}
+.tracks{list-style:none;margin:0;padding:0}
+.tracks a{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 2px;border-bottom:1px solid var(--line);text-decoration:none}
+.tracks .pos{font-family:var(--display);font-weight:800;font-size:18px;width:2.2em;flex:none;font-variant-numeric:tabular-nums;color:var(--muted)}
+.tracks .name{flex:1;font-weight:500;overflow-wrap:anywhere}
+.tracks .go{flex:none;width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center}
+.tracks .go svg,.btn svg{width:12px;height:12px;fill:currentColor}
+.btn svg{width:18px;height:18px}
+.fine{font-size:13px;color:var(--muted);margin:0}
+
+.crate{display:flex;flex-direction:column;gap:8px}
+.crate-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:4px}
+.crate h2{font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.crate h2 span{color:var(--muted);font-variant-numeric:tabular-nums}
+.crate ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.crate li{display:flex;gap:6px;align-items:stretch}
+.crate .open{flex:1;min-width:0;text-align:left;display:flex;flex-direction:column;gap:1px;min-height:52px;padding:8px 12px;border:1.5px solid var(--line);border-left:6px solid var(--wax);border-radius:4px;background:var(--card);color:var(--ink);font:500 15px var(--body);cursor:pointer;overflow-wrap:anywhere}
+.crate .open small{color:var(--muted);font-size:13px;font-weight:400}
+.crate .rm{flex:none;width:44px;border:1.5px solid var(--line);border-radius:4px;background:var(--card);color:var(--muted);font:400 22px/1 var(--body);cursor:pointer}
+.crate .foot{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.crate .clear{min-height:40px;padding:6px 12px;border:1.5px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);font:600 13px var(--body);cursor:pointer}
+.crate .clear.arm{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#f5b700"/><circle cx="32" cy="32" r="19" fill="#121416"/><circle cx="32" cy="32" r="15" fill="none" stroke="#33393d" stroke-width="1"/><circle cx="32" cy="32" r="11.5" fill="none" stroke="#33393d" stroke-width="1"/><circle cx="32" cy="32" r="6.5" fill="#f5b700"/><circle cx="32" cy="32" r="1.4" fill="#121416"/><path d="M9 19v-6a4 4 0 0 1 4-4h6M45 9h6a4 4 0 0 1 4 4v6M55 45v6a4 4 0 0 1-4 4h-6M19 55h-6a4 4 0 0 1-4-4v-6" fill="none" stroke="#121416" stroke-width="3.5" stroke-linecap="round"/></svg><span>Vinyl <b>Scanner</b></span></h1>
+  </header>
+
+  <div class="stage" aria-hidden="true">
+    <div class="record slow" id="record"></div>
+    <div class="sleeve" id="sleeve"></div>
+  </div>
+
+  <div class="actions">
+    <label class="btn primary" for="cam" tabindex="0" id="scanBtn">Scan a cover</label>
+    <input class="sr" type="file" id="cam" accept="image/*" capture="environment" tabindex="-1">
+    <div class="row">
+      <label class="quiet" for="lib" tabindex="0">Pick from photos</label>
+      <input class="sr" type="file" id="lib" accept="image/*" tabindex="-1">
+      <button class="quiet" type="button" id="typeBtn" aria-expanded="false" aria-controls="manual">Type it in</button>
+    </div>
+    <form class="manual" id="manual">
+      <input id="m-artist" name="artist" placeholder="Artist" autocomplete="off" aria-label="Artist">
+      <input id="m-album" name="album" placeholder="Album" autocomplete="off" aria-label="Album" required>
+      <button type="submit">Find</button>
+    </form>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </div>
+
+  <div class="svc">
+    <p class="svc-h" id="svc-h">Play on</p>
+    <div class="seg" id="svcs" role="radiogroup" aria-labelledby="svc-h"></div>
+  </div>
+
+  <section class="result" id="result" aria-live="polite"></section>
+
+  <section class="crate" id="crate" aria-labelledby="crate-h">
+    <div class="crate-h">
+      <h2 id="crate-h">History <span id="crateCount"></span></h2>
+      <p class="fine" id="crateWhere">Saved on this device</p>
+    </div>
+    <p class="fine" id="crateEmpty">No records yet. Every cover you scan or type in lands here.</p>
+    <ul id="crateList"></ul>
+    <div class="foot" id="crateFoot" hidden>
+      <p class="fine">Keeps your last 100 records.</p>
+      <button class="clear" type="button" id="clearBtn">Clear history</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  var EXAMPLE = {
+    example:true, artist:"Miles Davis", album:"Kind of Blue", year:1959, confidence:"high",
+    sides:[
+      {side:"A", tracks:["So What","Freddie Freeloader","Blue in Green"]},
+      {side:"B", tracks:["All Blues","Flamenco Sketches"]}
+    ]
+  };
+  var SERVICES = {
+    spotify:{name:"Spotify", url:function(q){return "https://open.spotify.com/search/"+encodeURIComponent(q);}},
+    apple:{name:"Apple Music", url:function(q){return "https://music.apple.com/search?term="+encodeURIComponent(q);}},
+    yt:{name:"YouTube Music", url:function(q){return "https://music.youtube.com/search?q="+encodeURIComponent(q);}},
+    youtube:{name:"YouTube", url:function(q){return "https://www.youtube.com/results?search_query="+encodeURIComponent(q);}},
+    amazon:{name:"Amazon Music", url:function(q){return "https://music.amazon.com/search/"+encodeURIComponent(q);}},
+    tidal:{name:"Tidal", url:function(q){return "https://tidal.com/search?q="+encodeURIComponent(q);}},
+    deezer:{name:"Deezer", url:function(q){return "https://www.deezer.com/search/"+encodeURIComponent(q);}},
+    soundcloud:{name:"SoundCloud", url:function(q){return "https://soundcloud.com/search?q="+encodeURIComponent(q);}},
+    bandcamp:{name:"Bandcamp", url:function(q){return "https://bandcamp.com/search?q="+encodeURIComponent(q);}}
+  };
+  var PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 0.8v10.4L11 6z"/></svg>';
+
+  var $ = function(id){return document.getElementById(id);};
+  var state = {record:EXAMPLE, svc:"spotify", photo:null};
+  var crate = [];
+  var busy = false;
+
+  function load(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
+  function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+
+  function el(tag,cls,text){var n=document.createElement(tag);if(cls)n.className=cls;if(text!=null)n.textContent=text;return n;}
+
+  function setStatus(msg,err){var s=$("status");s.textContent=msg||"";s.className="status"+(err?" err":"");}
+
+  function renderSleeve(){
+    var s=$("sleeve"), r=state.record; s.textContent="";
+    if(state.photo){var img=new Image();img.alt="";img.src=state.photo;s.appendChild(img);}
+    else if(r){
+      s.appendChild(el("div","s-artist",r.artist||""));
+      s.appendChild(el("div","s-album",r.album||""));
+    }
+    if(r&&r.example)s.appendChild(el("div","tag","Example"));
+  }
+
+  function renderResult(){
+    var box=$("result"), r=state.record, svc=SERVICES[state.svc]; box.textContent="";
+    if(!r)return;
+    var meta=el("div","meta");
+    meta.appendChild(el("p","artist",r.artist||"Unknown artist"));
+    meta.appendChild(el("h2","album",r.album||"Unknown album"));
+    var sub=el("p","sub");
+    if(r.year)sub.appendChild(el("span",null,String(r.year)));
+    if(r.example)sub.appendChild(el("span","pill","Example record"));
+    else if(r.confidence==="low")sub.appendChild(el("span","pill low","Not sure about this one"));
+    else if(r.confidence==="medium")sub.appendChild(el("span","pill","Probably this"));
+    meta.appendChild(sub);
+    box.appendChild(meta);
+
+    var q=((r.artist||"")+" "+(r.album||"")).trim();
+    var play=el("a","btn dark");
+    play.href=svc.url(q);play.target="_blank";play.rel="noopener";
+    play.innerHTML=PLAY;play.appendChild(el("span",null,"Play on "+svc.name));
+    box.appendChild(play);
+
+    (r.sides||[]).forEach(function(side){
+      if(!side||!side.tracks||!side.tracks.length)return;
+      var sec=el("div","side");
+      var letter=String(side.side||"").toUpperCase();
+      sec.appendChild(el("h3",null,letter?"Side "+letter:"Tracks"));
+      var ul=el("ul","tracks");
+      side.tracks.forEach(function(t,i){
+        var li=el("li"), a=el("a");
+        a.href=svc.url(((r.artist||"")+" "+t).trim());a.target="_blank";a.rel="noopener";
+        a.setAttribute("aria-label","Play "+t+" on "+svc.name);
+        a.appendChild(el("span","pos",(letter||"")+(i+1)));
+        a.appendChild(el("span","name",t));
+        var go=el("span","go");go.innerHTML=PLAY;a.appendChild(go);
+        li.appendChild(a);ul.appendChild(li);
+      });
+      sec.appendChild(ul);box.appendChild(sec);
+    });
+    if(!r.example&&r.sides&&r.sides.length)
+      box.appendChild(el("p","fine","Track list comes from Claude's knowledge of the album. Your pressing may differ."));
+  }
+
+  var MAX=100, remote=null, synced=false, chain=Promise.resolve(), armT=null;
+  function keyOf(x){return ((x.artist||"")+"|"+(x.album||"")).toLowerCase();}
+  function when(t){
+    if(!t)return "";
+    try{var d=new Date(t), now=new Date();
+      var o={month:"short",day:"numeric"};if(d.getFullYear()!==now.getFullYear())o.year="numeric";
+      return d.toLocaleDateString(undefined,o);}catch(e){return "";}
+  }
+  function renderCrate(){
+    var ul=$("crateList"); ul.textContent="";
+    $("crateEmpty").hidden=!!crate.length;$("crateFoot").hidden=!crate.length;
+    $("crateCount").textContent=crate.length?"· "+crate.length:"";
+    crate.forEach(function(r){
+      var li=el("li"), b=el("button","open");b.type="button";
+      b.appendChild(el("span",null,r.album||"Unknown album"));
+      var bits=[r.artist,r.year,when(r.at)?"scanned "+when(r.at):""].filter(Boolean);
+      b.appendChild(el("small",null,bits.join(" · ")));
+      b.addEventListener("click",function(){state.record=r;state.photo=null;render();window.scrollTo({top:0,behavior:"smooth"});});
+      var x=el("button","rm","×");x.type="button";x.setAttribute("aria-label","Remove "+(r.album||"record")+" from history");
+      x.addEventListener("click",function(){crate=crate.filter(function(y){return y!==r;});persist();renderCrate();});
+      li.appendChild(b);li.appendChild(x);ul.appendChild(li);
+    });
+  }
+
+  function render(){renderSleeve();renderResult();renderCrate();}
+
+  function persist(){
+    save("vynil.crate",crate);
+    if(!remote||!synced)return;
+    var body=JSON.parse(JSON.stringify({items:crate}));
+    chain=chain.then(function(){return remote.set(body);}).catch(function(){});
+  }
+  function addToCrate(r){
+    crate=crate.filter(function(x){return keyOf(x)!==keyOf(r);});
+    var item={artist:r.artist,album:r.album,year:r.year,confidence:r.confidence,sides:r.sides,at:Date.now()};
+    if(!synced)item.p=1;
+    crate.unshift(item);crate=crate.slice(0,MAX);persist();
+  }
+  async function initSync(){
+    try{
+      if(!(window.claude&&window.claude.use))return;
+      var user=await window.claude.use("user"), db=await window.claude.use("db");
+      if(!user||!db)return;
+      var id=await user.id();if(!id)return;
+      var ref=db.doc("data/users/"+id+"/history");
+      var snap=await ref.get(), d=snap.exists?snap.data():null;
+      var theirs=d&&Array.isArray(d.items)?JSON.parse(JSON.stringify(d.items)):[];
+      var mine=load("vynil.synced",false)?crate.filter(function(x){return x.p;}):crate;
+      var seen={}, merged=[];
+      mine.concat(theirs).sort(function(a,b){return (b.at||0)-(a.at||0);}).forEach(function(x){
+        var k=keyOf(x);if(seen[k])return;seen[k]=1;delete x.p;merged.push(x);
+      });
+      merged=merged.slice(0,MAX);
+      var changed=JSON.stringify(merged)!==JSON.stringify(theirs);
+      crate=merged;remote=ref;synced=true;save("vynil.synced",true);save("vynil.crate",crate);
+      if(changed)persist();
+      $("crateWhere").textContent="Saved to your Claude account";
+      renderCrate();
+    }catch(e){remote=null;synced=false;}
+  }
+  $("clearBtn").addEventListener("click",function(){
+    var b=this;clearTimeout(armT);
+    if(b.classList.contains("arm")){b.classList.remove("arm");b.textContent="Clear history";crate=[];persist();renderCrate();return;}
+    b.classList.add("arm");b.textContent="Tap again to clear all";
+    armT=setTimeout(function(){b.classList.remove("arm");b.textContent="Clear history";},4000);
+  });
+
+  function shrink(file){
+    return new Promise(function(res,rej){
+      var url=URL.createObjectURL(file), img=new Image();
+      img.onload=function(){
+        var max=1280, k=Math.min(1,max/Math.max(img.width,img.height));
+        var c=document.createElement("canvas");c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);
+        c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+        URL.revokeObjectURL(url);
+        c.toBlob(function(b){b?res(b):rej(new Error("toBlob"));},"image/jpeg",0.85);
+      };
+      img.onerror=function(){URL.revokeObjectURL(url);rej(new Error("image"));};
+      img.src=url;
+    });
+  }
+
+  function parseJSON(text){
+    var a=text.indexOf("{"), b=text.lastIndexOf("}");
+    if(a<0||b<=a)throw new Error("no json");
+    return JSON.parse(text.slice(a,b+1));
+  }
+
+  function clean(r){
+    var sides=Array.isArray(r.sides)?r.sides.map(function(s){
+      return {side:String((s&&s.side)||"").slice(0,2),tracks:Array.isArray(s&&s.tracks)?s.tracks.map(String).filter(Boolean).slice(0,30):[]};
+    }).filter(function(s){return s.tracks.length;}):[];
+    return {artist:String(r.artist||""),album:String(r.album||""),year:r.year?Number(r.year)||null:null,
+      confidence:/^(high|medium|low)$/.test(r.confidence)?r.confidence:"medium",sides:sides};
+  }
+
+  var FORMAT='Reply with JSON only, no prose: {"found":boolean,"artist":string,"album":string,"year":number|null,'+
+    '"confidence":"high"|"medium"|"low","sides":[{"side":"A","tracks":["title"]}],"note":string}. '+
+    'Give the original LP track order split into sides (A, B, C, D) when you know it; if you only know the order, put everything on side A. '+
+    'Only list tracks you are confident are on this album. If you cannot tell which album it is, set found to false and say what you see in note.';
+
+  async function ask(prompt,images){
+    var sample=window.claude&&window.claude.use?await window.claude.use("sample"):null;
+    if(!sample){var e=new Error("unavailable");e.code="unavailable";throw e;}
+    var opts={modelTier:"default"};
+    if(images){
+      var ok=true;try{ok=!!(await sample.limits()).images;}catch(_){}
+      if(!ok){var e2=new Error("noimages");e2.code="unavailable";throw e2;}
+      opts.images=images;
+    }
+    var out=await sample(prompt,opts);
+    return parseJSON(out.text||"");
+  }
+
+  async function identify(prompt,images){
+    if(busy)return;busy=true;
+    $("record").className="record spin";
+    try{
+      var r=await ask(prompt,images);
+      if(!r.found||!r.album){
+        setStatus("Couldn't tell which record that is"+(r.note?" ("+String(r.note).slice(0,140)+")":"")+". Try a straighter, brighter shot, or type it in.",true);
+      }else{
+        state.record=clean(r);addToCrate(state.record);setStatus("");render();
+        var res=$("result");if(res.scrollIntoView)res.scrollIntoView({behavior:"smooth",block:"nearest"});
+      }
+    }catch(e){
+      if(e&&(e.code==="unavailable"||e.code==="not_granted"))
+        setStatus("Cover recognition isn't available in this view. Type the artist and album instead.",true),openManual();
+      else if(e&&e.code==="rate_limited")setStatus("Too many scans in a row. Wait a minute and try again.",true);
+      else setStatus("The scan didn't go through. Check your connection and try again.",true);
+    }finally{busy=false;$("record").className="record slow";}
+  }
+
+  async function onFile(input){
+    var f=input.files&&input.files[0];input.value="";
+    if(!f)return;
+    setStatus("Reading the cover…");
+    var blob;
+    try{blob=await shrink(f);}catch(e){setStatus("That file isn't a photo this page can read. Try a JPEG or PNG.",true);return;}
+    if(state.photo)try{URL.revokeObjectURL(state.photo);}catch(_){}
+    state.photo=URL.createObjectURL(blob);state.record=null;renderSleeve();$("result").textContent="";
+    setStatus("Looking through the crates…");
+    await identify("This is a photo of a record cover. Identify the album. "+FORMAT,[blob]);
+  }
+
+  function openManual(){$("manual").classList.add("open");$("typeBtn").setAttribute("aria-expanded","true");}
+
+  $("cam").addEventListener("change",function(){onFile(this);});
+  $("lib").addEventListener("change",function(){onFile(this);});
+  Array.prototype.forEach.call(document.querySelectorAll("label[for][tabindex]"),function(l){
+    l.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();$(l.getAttribute("for")).click();}});
+  });
+  $("typeBtn").addEventListener("click",function(){
+    var open=$("manual").classList.toggle("open");this.setAttribute("aria-expanded",String(open));
+    if(open)$("m-artist").focus();
+  });
+  $("manual").addEventListener("submit",async function(e){
+    e.preventDefault();
+    var artist=$("m-artist").value.trim(), album=$("m-album").value.trim();
+    if(!album)return;
+    state.photo=null;
+    state.record={artist:artist,album:album,year:null,confidence:"high",sides:[]};
+    addToCrate(state.record);render();
+    setStatus("Fetching the track list…");
+    var before=state.record;
+    try{
+      var r=await ask('Album: "'+album+'"'+(artist?' by "'+artist+'"':'')+". Fill in its details. "+FORMAT);
+      if(r.found&&state.record===before){state.record=clean(r);addToCrate(state.record);render();}
+      setStatus("");
+    }catch(_){setStatus("");}
+  });
+  function buildSvcs(){
+    var box=$("svcs");box.textContent="";
+    Object.keys(SERVICES).forEach(function(k){
+      var i=el("input","sr");i.type="radio";i.name="svc";i.id="svc-"+k;i.value=k;i.checked=k===state.svc;
+      i.addEventListener("change",function(){state.svc=k;save("vynil.svc",k);renderResult();});
+      var l=el("label",null,SERVICES[k].name);l.htmlFor=i.id;
+      box.appendChild(i);box.appendChild(l);
+    });
+  }
+
+  function start(data){
+    crate=load("vynil.crate",[]);if(!Array.isArray(crate))crate=[];
+    var svc=load("vynil.svc","spotify");if(SERVICES[svc])state.svc=svc;
+    if(data&&data.record)state.record=data.record;
+    if(data&&data.svc&&SERVICES[data.svc])state.svc=data.svc;
+    buildSvcs();
+    render();
+    initSync();
+  }
+  var hot=window.claude&&window.claude.hot;
+  if(hot&&hot.snapshot)hot.snapshot(function(){return {record:state.record,svc:state.svc};});
+  if(hot&&hot.ready)hot.ready(start);else start((hot&&hot.data)||{});
+})();
+</script>
+</body>
+</html>
