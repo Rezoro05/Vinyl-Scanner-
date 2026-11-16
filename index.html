@@ -362,8 +362,31 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     'Give the original LP track order split into sides (A, B, C, D) when you know it; if you only know the order, put everything on side A. '+
     'Only list tracks you are confident are on this album. If you cannot tell which album it is, set found to false and say what you see in note.';
 
+  /* Outside claude.ai, scans go through this relay (a Cloudflare Worker holding the API key). Empty = no relay. */
+  var RELAY="https://billowing-poetry-5068.rez-kupa.workers.dev/";
+
+  function toBase64(blob){
+    return new Promise(function(res,rej){
+      var fr=new FileReader();
+      fr.onload=function(){res(String(fr.result).split(",")[1]||"");};
+      fr.onerror=function(){rej(new Error("read"));};
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function askRelay(prompt,images){
+    var body={prompt:prompt};
+    if(images&&images[0])body.image=await toBase64(images[0]);
+    var res=await fetch(RELAY,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(res.status===429){var e=new Error("rate");e.code="rate_limited";throw e;}
+    if(!res.ok)throw new Error("relay "+res.status);
+    var out=await res.json();
+    return parseJSON(out.text||"");
+  }
+
   async function ask(prompt,images){
     var sample=window.claude&&window.claude.use?await window.claude.use("sample"):null;
+    if(!sample&&RELAY)return askRelay(prompt,images);
     if(!sample){var e=new Error("unavailable");e.code="unavailable";throw e;}
     var opts={modelTier:"default"};
     if(images){
