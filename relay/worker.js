@@ -59,23 +59,31 @@ export default {
     const parts = [];
     if (image) parts.push({ inlineData: { mimeType: "image/jpeg", data: image } });
     parts.push({ text: prompt });
-    const payload = JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: { responseMimeType: "application/json" },
-    });
+    // "minimal" thinking makes the answer come back much faster. If a model
+    // doesn't accept that setting (HTTP 400), the same model is retried without it.
+    const makePayload = (fast) =>
+      JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          maxOutputTokens: 1500,
+          ...(fast ? { thinkingConfig: { thinkingLevel: "minimal" } } : {}),
+        },
+      });
+
+    const call = (model, fast) =>
+      fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+        body: makePayload(fast),
+      });
 
     let lastStatus = 0;
     for (const model of MODELS) {
       let res;
       try {
-        res = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-            body: payload,
-          }
-        );
+        res = await call(model, true);
+        if (res.status === 400) res = await call(model, false);
       } catch (e) {
         lastStatus = 0;
         continue;
