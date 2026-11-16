@@ -389,8 +389,18 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
   async function askRelay(prompt,images,signal){
     var body={prompt:prompt};
     if(images&&images[0])body.image=await toBase64(images[0]);
-    /* text/plain keeps this a "simple" request, so the browser skips the extra preflight round trip */
-    var res=await fetch(RELAY,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body),signal:signal});
+    /* Give up after 20s so a stuck request never leaves the scan spinning forever */
+    var ctrl=window.AbortController?new AbortController():null, timedOut=false;
+    if(ctrl&&signal){if(signal.aborted)ctrl.abort();else signal.addEventListener("abort",function(){ctrl.abort();});}
+    var timer=setTimeout(function(){timedOut=true;if(ctrl)ctrl.abort();},20000);
+    var res;
+    try{
+      /* text/plain keeps this a "simple" request, so the browser skips the extra preflight round trip */
+      res=await fetch(RELAY,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify(body),signal:ctrl?ctrl.signal:undefined});
+    }catch(err){
+      if(timedOut){var te=new Error("timeout");te.code="timeout";throw te;}
+      throw err;
+    }finally{clearTimeout(timer);}
     if(res.status===429){var e=new Error("rate");e.code="rate_limited";throw e;}
     if(!res.ok)throw new Error("relay "+res.status);
     var out=await res.json();
@@ -445,6 +455,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       if(e&&(e.code==="unavailable"||e.code==="not_granted"))
         setStatus("Cover recognition isn't available in this view. Type the artist and album instead.",true),openManual();
       else if(e&&e.code==="rate_limited")setStatus("Too many scans in a row. Wait a minute and try again.",true);
+      else if(e&&e.code==="timeout")setStatus("That took too long, so the scan was stopped. Try again.",true);
       else setStatus("The scan didn't go through. Check your connection and try again.",true);
     }finally{endScan(s);}
   }

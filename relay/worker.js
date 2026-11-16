@@ -8,6 +8,8 @@ const MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 const MAX_IMAGE_CHARS = 2500000; // base64 length, about 1.8 MB of photo
 const MAX_PROMPT_CHARS = 2000;
 const PER_MINUTE = 8; // scans per visitor per minute
+const HEDGE_MS = 2500; // wait this long before also asking the backup model
+const ATTEMPT_TIMEOUT_MS = 12000; // give up on a single model after this long
 
 const hits = new Map();
 
@@ -71,38 +73,54 @@ export default {
         },
       });
 
-    const call = (model, fast) =>
-      fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
-        body: makePayload(fast),
+    const started = Date.now();
+    const attempt = async (model, fast) => {
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY },
+          body: makePayload(fast),
+          signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+        }
+      );
+      if (res.status === 400 && fast) return attempt(model, false);
+      if (!res.ok) throw Object.assign(new Error("upstream"), { status: res.status });
+      const data = await res.json();
+      const cand = (data.candidates || [])[0] || {};
+      const text = ((cand.content && cand.content.parts) || [])
+        .filter((p) => typeof p.text === "string" && !p.thought)
+        .map((p) => p.text)
+        .join("");
+      if (!text) throw Object.assign(new Error("empty"), { status: 502 });
+      return { text, model, ms: Date.now() - started };
+    };
+
+    // Google's free tier sometimes leaves a request hanging. So: ask the first
+    // model, and if it hasn't answered within HEDGE_MS (or it fails), also ask
+    // the backup model. Whichever answers first wins.
+    let settled = false;
+    const first = attempt(MODELS[0], true);
+    const backup = new Promise((resolve) => {
+      const timer = setTimeout(resolve, HEDGE_MS);
+      first.catch(() => {
+        clearTimeout(timer);
+        resolve();
       });
+    }).then(() => {
+      if (settled) throw new Error("not needed");
+      return attempt(MODELS[1], true);
+    });
 
-    let lastStatus = 0;
-    for (const model of MODELS) {
-      let res;
-      try {
-        res = await call(model, true);
-        if (res.status === 400) res = await call(model, false);
-      } catch (e) {
-        lastStatus = 0;
-        continue;
-      }
-      if (res.ok) {
-        const data = await res.json();
-        const cand = (data.candidates || [])[0] || {};
-        const text = ((cand.content && cand.content.parts) || [])
-          .filter((p) => typeof p.text === "string" && !p.thought)
-          .map((p) => p.text)
-          .join("");
-        return reply(200, { text });
-      }
-      lastStatus = res.status;
-      // Out of quota, overloaded, or model name retired: try the next model.
-      if (![429, 404, 500, 503].includes(res.status)) break;
+    try {
+      const won = await Promise.any([first, backup]);
+      settled = true;
+      return reply(200, won);
+    } catch (err) {
+      settled = true;
+      const statuses = (err.errors || []).map((x) => x && x.status);
+      if (statuses.includes(429)) return reply(429, { error: "rate_limited" });
+      return reply(502, { error: "upstream", statuses });
     }
-
-    if (lastStatus === 429) return reply(429, { error: "rate_limited" });
-    return reply(502, { error: "upstream", status: lastStatus });
   },
 };
