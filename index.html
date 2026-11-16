@@ -133,6 +133,18 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
 .tracks .pv{flex:none;display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:var(--ink);color:var(--paper);cursor:pointer}
 .tracks .pv svg{width:12px;height:12px;fill:currentColor}
 .tracks .pv[aria-pressed="true"]{background:var(--label);color:var(--on-label)}
+/* no Apple sample for this track: a button with the chosen service's logo that opens the song there */
+.tracks .ext{flex:none;display:grid;place-items:center;width:40px;height:40px;min-height:0;padding:0;border:1.5px solid var(--line);border-radius:50%;background:#fff;color:#14171a}
+.tracks .ext img{width:20px;height:20px;display:block}
+.tracks .ext svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+/* loading placeholders */
+.wait{flex:none;width:40px;height:40px;border-radius:50%;background:var(--line);animation:pulse 1.6s ease-in-out infinite}
+.skel{display:flex;flex-direction:column}
+.skel-row{display:flex;align-items:center;gap:12px;min-height:48px;padding:4px 2px;border-bottom:1px solid var(--line)}
+.skel-row i{display:block;height:12px;border-radius:6px;background:var(--line);animation:pulse 1.6s ease-in-out infinite}
+.skel-row .sp{width:1.6em;flex:none}
+.skel-row .sn{flex:none}
+.skel-row .wait{margin-left:auto}
 .btn svg{width:18px;height:18px}
 .fine{font-size:13px;color:var(--muted);margin:0}
 
@@ -216,18 +228,30 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     ]
   };
   var SERVICES = {
-    spotify:{name:"Spotify", url:function(q){return "https://open.spotify.com/search/"+encodeURIComponent(q);}},
-    apple:{name:"Apple Music", url:function(q){return "https://music.apple.com/search?term="+encodeURIComponent(q);}},
-    yt:{name:"YouTube Music", url:function(q){return "https://music.youtube.com/search?q="+encodeURIComponent(q);}},
-    youtube:{name:"YouTube", url:function(q){return "https://www.youtube.com/results?search_query="+encodeURIComponent(q);}},
+    spotify:{name:"Spotify", icon:"spotify", url:function(q){return "https://open.spotify.com/search/"+encodeURIComponent(q);}},
+    apple:{name:"Apple Music", icon:"applemusic", url:function(q){return "https://music.apple.com/search?term="+encodeURIComponent(q);}},
+    yt:{name:"YouTube Music", icon:"youtubemusic", url:function(q){return "https://music.youtube.com/search?q="+encodeURIComponent(q);}},
+    youtube:{name:"YouTube", icon:"youtube", url:function(q){return "https://www.youtube.com/results?search_query="+encodeURIComponent(q);}},
     amazon:{name:"Amazon Music", url:function(q){return "https://music.amazon.com/search/"+encodeURIComponent(q);}},
-    tidal:{name:"Tidal", url:function(q){return "https://tidal.com/search?q="+encodeURIComponent(q);}},
-    deezer:{name:"Deezer", url:function(q){return "https://www.deezer.com/search/"+encodeURIComponent(q);}},
-    soundcloud:{name:"SoundCloud", url:function(q){return "https://soundcloud.com/search?q="+encodeURIComponent(q);}},
-    bandcamp:{name:"Bandcamp", url:function(q){return "https://bandcamp.com/search?q="+encodeURIComponent(q);}}
+    tidal:{name:"Tidal", icon:"tidal", url:function(q){return "https://tidal.com/search?q="+encodeURIComponent(q);}},
+    deezer:{name:"Deezer", icon:"deezer", url:function(q){return "https://www.deezer.com/search/"+encodeURIComponent(q);}},
+    soundcloud:{name:"SoundCloud", icon:"soundcloud", url:function(q){return "https://soundcloud.com/search?q="+encodeURIComponent(q);}},
+    bandcamp:{name:"Bandcamp", icon:"bandcamp", url:function(q){return "https://bandcamp.com/search?q="+encodeURIComponent(q);}}
   };
   var PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 0.8v10.4L11 6z"/></svg>';
   var STOP = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2h8v8H2z"/></svg>';
+  /* generic "opens elsewhere" arrow, used when a service has no logo in the icon set or the logo can't load */
+  var OPEN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7.5 8.5"/></svg>';
+  /* service logos: Simple Icons (simpleicons.org), served by jsDelivr */
+  var ICONS = "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/";
+  function svcIcon(svc){
+    var box=document.createDocumentFragment();
+    if(!svc.icon){var w=el("span");w.innerHTML=OPEN;box.appendChild(w.firstChild);return box;}
+    var img=new Image();img.alt="";img.width=20;img.height=20;img.decoding="async";
+    img.onerror=function(){var w=el("span");w.innerHTML=OPEN;if(img.parentNode)img.parentNode.replaceChild(w.firstChild,img);};
+    img.src=ICONS+svc.icon+".svg";
+    box.appendChild(img);return box;
+  }
 
   var $ = function(id){return document.getElementById(id);};
   var state = {record:EXAMPLE, svc:"spotify", photo:null};
@@ -274,6 +298,19 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     play.innerHTML=PLAY;play.appendChild(el("span",null,"Play on "+svc.name));
     box.appendChild(play);
 
+    if(tracksFor===r&&!(r.sides&&r.sides.length)){
+      var sk=el("div","skel");
+      sk.appendChild(el("p","fine","Finding the track list\u2026"));
+      [62,44,70,38,55].forEach(function(wd){
+        var row=el("div","skel-row");row.setAttribute("aria-hidden","true");
+        row.appendChild(el("i","sp"));
+        var n=el("i","sn");n.style.width=wd+"%";row.appendChild(n);
+        row.appendChild(el("span","wait"));
+        sk.appendChild(row);
+      });
+      box.appendChild(sk);
+    }
+
     (r.sides||[]).forEach(function(side){
       if(!side||!side.tracks||!side.tracks.length)return;
       var sec=el("div","side");
@@ -290,7 +327,13 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
         pv.setAttribute("aria-label","Play a 30 second sample of "+t);
         pvPaint(pv,false);
         pv.addEventListener("click",function(){togglePreview(pv);});
-        li.appendChild(a);li.appendChild(pv);ul.appendChild(li);
+        var ext=el("a","ext");ext.hidden=true;
+        ext.href=a.href;ext.target="_blank";ext.rel="noopener";
+        ext.setAttribute("aria-label","Play "+t+" on "+svc.name);
+        ext.appendChild(svcIcon(svc));
+        var wt=el("span","wait");wt.setAttribute("aria-hidden","true");
+        pv._ext=ext;pv._wait=wt;
+        li.appendChild(a);li.appendChild(pv);li.appendChild(ext);li.appendChild(wt);ul.appendChild(li);
       });
       sec.appendChild(ul);box.appendChild(sec);
     });
@@ -298,7 +341,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       box.appendChild(el("p","fine",r.src==="mb"
         ?"Track list from MusicBrainz. Your pressing may differ."
         :"Track list is the AI's best guess. Your pressing may differ."));
-    var note=el("p","fine","Play buttons are 30-second samples from Apple Music. Tap a title to open the full song on "+svc.name+".");note.id="pvNote";note.hidden=true;box.appendChild(note);
+    var note=el("p","fine","Play buttons are 30-second samples from Apple Music. Tracks without a sample get a button that opens them on "+svc.name+".");note.id="pvNote";note.hidden=true;box.appendChild(note);
     attachPreviews(r);
   }
 
@@ -385,17 +428,22 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     });
     return e;
   }
+  var NOPV={strict:Object.create(null),loose:Object.create(null)};
   function attachPreviews(r){
-    if(!r||!r.album)return;
+    if(!r)return;
+    if(!r.album){showPreviews(NOPV);return;}
     var e=previewsFor(r);
     if(e.map)showPreviews(e.map);
-    else e.p.then(function(){if(e.map&&state.record===r)showPreviews(e.map);});
+    /* until the lookup answers, rows show a pulsing placeholder; a failed lookup falls back to service buttons */
+    else e.p.then(function(){if(state.record===r)showPreviews(e.map||NOPV);});
   }
   function showPreviews(m){
     var n=0;
     Array.prototype.forEach.call($("result").querySelectorAll(".pv"),function(b){
       var url=previewUrl(m,b._title);
-      if(!url)return;
+      if(b._wait)b._wait.hidden=true;
+      if(!url){b.hidden=true;if(b._ext)b._ext.hidden=false;return;}
+      if(b._ext)b._ext.hidden=true;
       n++;b._pv=url;b.hidden=false;
       if(url===pvUrl&&player&&!player.paused){pvBtn=b;pvPaint(b,true);}
     });
@@ -636,6 +684,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
   async function loadTracks(rec){
     tracksFor=rec;
     setStatus("Finding the track list\u2026");
+    if(state.record===rec)renderResult();
     var oldKey=keyOf(rec), got=null;
     try{got=await mbTracks(rec.artist,rec.album);}catch(_){}
     if(got){
