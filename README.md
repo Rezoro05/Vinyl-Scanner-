@@ -10,6 +10,10 @@ Photograph a record cover and get the album, its track list by side (A1, B2…),
 - **Play on** Spotify, Apple Music, YouTube Music, YouTube, Amazon Music, Tidal, Deezer, SoundCloud or Bandcamp. Switch platform without rescanning.
 - **History** of the last 100 records, with the date scanned. Tap one to reopen it.
 
+## Install on a phone
+
+Open the page, then use **Share → Add to Home Screen** on iPhone (Safari) or **⋮ → Add to Home screen / Install app** on Android (Chrome). It then opens full screen with its own icon.
+
 ## Where it runs
 
 The app is a single file, `index.html`, built as a Claude artifact. Cover recognition and account-synced history use the artifact runtime (`window.claude`), so they only work when the page is opened on claude.ai.
@@ -20,3 +24,4 @@ Opened anywhere else (for example GitHub Pages), the page still loads and "Type 
 
 - `index.html`: the whole app (markup, styles, script)
 - `logo.svg`: app logo and favicon
+- `manifest.json` and `icons/`: let the page be added to a phone's home screen and open full screen
