@@ -129,11 +129,10 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
 .tracks a{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 2px;text-decoration:none}
 .tracks .pos{font-family:var(--display);font-weight:800;font-size:18px;width:2.2em;flex:none;font-variant-numeric:tabular-nums;color:var(--muted)}
 .tracks .name{flex:1;font-weight:500;overflow-wrap:anywhere}
-.tracks .go{flex:none;width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center}
-.tracks .go svg,.btn svg{width:12px;height:12px;fill:currentColor}
-.tracks .pv{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:70px;min-height:40px;padding:6px 10px;border:1.5px solid var(--ink);border-radius:999px;background:transparent;color:var(--ink);font:600 13px var(--body);cursor:pointer}
-.tracks .pv svg{width:10px;height:10px;fill:currentColor}
-.tracks .pv[aria-pressed="true"]{background:var(--label);color:var(--on-label);border-color:var(--on-label)}
+.btn svg{width:12px;height:12px;fill:currentColor}
+.tracks .pv{flex:none;display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:var(--ink);color:var(--paper);cursor:pointer}
+.tracks .pv svg{width:12px;height:12px;fill:currentColor}
+.tracks .pv[aria-pressed="true"]{background:var(--label);color:var(--on-label)}
 .btn svg{width:18px;height:18px}
 .fine{font-size:13px;color:var(--muted);margin:0}
 
@@ -284,12 +283,11 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       side.tracks.forEach(function(t,i){
         var li=el("li"), a=el("a");
         a.href=svc.url(((r.artist||"")+" "+t).trim());a.target="_blank";a.rel="noopener";
-        a.setAttribute("aria-label","Play "+t+" on "+svc.name);
+        a.setAttribute("aria-label","Open "+t+" on "+svc.name);
         a.appendChild(el("span","pos",(letter||"")+(i+1)));
         a.appendChild(el("span","name",t));
-        var go=el("span","go");go.innerHTML=PLAY;a.appendChild(go);
         var pv=el("button","pv");pv.type="button";pv.hidden=true;pv._title=t;
-        pv.setAttribute("aria-label","Play a 30 second preview of "+t);
+        pv.setAttribute("aria-label","Play a 30 second sample of "+t);
         pvPaint(pv,false);
         pv.addEventListener("click",function(){togglePreview(pv);});
         li.appendChild(a);li.appendChild(pv);ul.appendChild(li);
@@ -300,7 +298,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       box.appendChild(el("p","fine",r.src==="mb"
         ?"Track list from MusicBrainz. Your pressing may differ."
         :"Track list is the AI's best guess. Your pressing may differ."));
-    var note=el("p","fine","30-second previews from Apple Music.");note.id="pvNote";note.hidden=true;box.appendChild(note);
+    var note=el("p","fine","Play buttons are 30-second samples from Apple Music. Tap a title to open the full song on "+svc.name+".");note.id="pvNote";note.hidden=true;box.appendChild(note);
     attachPreviews(r);
   }
 
@@ -416,7 +414,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     return player;
   }
   function pvPaint(btn,on){
-    btn.innerHTML=on?STOP:PLAY;btn.appendChild(el("span",null,on?"Stop":"30s"));
+    btn.innerHTML=on?STOP:PLAY;
     btn.setAttribute("aria-pressed",String(on));
   }
   function stopPreview(){
