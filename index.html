@@ -116,11 +116,15 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
 .pill.low{background:var(--label);color:var(--on-label);border-color:var(--on-label)}
 .side h3{font-family:var(--display);font-weight:800;font-size:18px;letter-spacing:.14em;text-transform:uppercase;margin:6px 0 4px;padding-bottom:4px;border-bottom:2px solid var(--ink)}
 .tracks{list-style:none;margin:0;padding:0}
-.tracks a{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 2px;border-bottom:1px solid var(--line);text-decoration:none}
+.tracks li{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+.tracks a{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 2px;text-decoration:none}
 .tracks .pos{font-family:var(--display);font-weight:800;font-size:18px;width:2.2em;flex:none;font-variant-numeric:tabular-nums;color:var(--muted)}
 .tracks .name{flex:1;font-weight:500;overflow-wrap:anywhere}
 .tracks .go{flex:none;width:30px;height:30px;border-radius:50%;background:var(--ink);color:var(--paper);display:grid;place-items:center}
 .tracks .go svg,.btn svg{width:12px;height:12px;fill:currentColor}
+.tracks .pv{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:70px;min-height:40px;padding:6px 10px;border:1.5px solid var(--ink);border-radius:999px;background:transparent;color:var(--ink);font:600 13px var(--body);cursor:pointer}
+.tracks .pv svg{width:10px;height:10px;fill:currentColor}
+.tracks .pv[aria-pressed="true"]{background:var(--label);color:var(--on-label);border-color:var(--on-label)}
 .btn svg{width:18px;height:18px}
 .fine{font-size:13px;color:var(--muted);margin:0}
 
@@ -215,6 +219,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     bandcamp:{name:"Bandcamp", url:function(q){return "https://bandcamp.com/search?q="+encodeURIComponent(q);}}
   };
   var PLAY = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 0.8v10.4L11 6z"/></svg>';
+  var STOP = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 2h8v8H2z"/></svg>';
 
   var $ = function(id){return document.getElementById(id);};
   var state = {record:EXAMPLE, svc:"spotify", photo:null};
@@ -240,6 +245,9 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
 
   function renderResult(){
     var box=$("result"), r=state.record, svc=SERVICES[state.svc]; box.textContent="";
+    /* a different record stops the preview; the same record redrawn (e.g. switching service) keeps it playing */
+    if(pvRec!==r){stopPreview();pvRec=r;}
+    pvBtn=null;
     if(!r)return;
     var meta=el("div","meta");
     meta.appendChild(el("p","artist",r.artist||"Unknown artist"));
@@ -271,7 +279,11 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
         a.appendChild(el("span","pos",(letter||"")+(i+1)));
         a.appendChild(el("span","name",t));
         var go=el("span","go");go.innerHTML=PLAY;a.appendChild(go);
-        li.appendChild(a);ul.appendChild(li);
+        var pv=el("button","pv");pv.type="button";pv.hidden=true;pv._title=t;
+        pv.setAttribute("aria-label","Play a 30 second preview of "+t);
+        pvPaint(pv,false);
+        pv.addEventListener("click",function(){togglePreview(pv);});
+        li.appendChild(a);li.appendChild(pv);ul.appendChild(li);
       });
       sec.appendChild(ul);box.appendChild(sec);
     });
@@ -279,6 +291,139 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       box.appendChild(el("p","fine",r.src==="mb"
         ?"Track list from MusicBrainz. Your pressing may differ."
         :"Track list is the AI's best guess. Your pressing may differ."));
+    var note=el("p","fine","30-second previews from Apple Music.");note.id="pvNote";note.hidden=true;box.appendChild(note);
+    attachPreviews(r);
+  }
+
+  /* ---- 30-second previews ----
+     From Apple's public iTunes Search API (no key). Two calls: find the album, then list
+     its songs, so a preview always comes from this album and not a cover or compilation. */
+  var ITUNES="https://itunes.apple.com/";
+  function norm(s){
+    return String(s||"").normalize("NFD").replace(/\p{M}/gu,"").toLowerCase()
+      .replace(/\(feat\..*?\)|\[.*?\]|\(.*?remaster.*?\)|\s-\s[^-]*remaster.*$/gi,"")
+      .replace(/[^\p{L}\p{N}]/gu,"");
+  }
+  /* second-chance key: also ignores anything in brackets, e.g. "So What (Live)" */
+  function loose(s){return norm(String(s||"").replace(/\(.*?\)/g,""));}
+  function overlaps(a,b){return !!a&&!!b&&(a.indexOf(b)>=0||b.indexOf(a)>=0);}
+
+  /* Some browsers block the plain request to Apple (CORS); a script-tag request gets through */
+  var jsonpN=0;
+  function jsonp(url){
+    return new Promise(function(res){
+      var name="__vsPreview"+(++jsonpN), s=document.createElement("script"), done=false;
+      function finish(v){
+        if(done)return;done=true;clearTimeout(t);
+        window[name]=function(){};
+        if(s.parentNode)s.parentNode.removeChild(s);
+        res(v);
+      }
+      var t=setTimeout(function(){finish(null);},8000);
+      window[name]=function(d){finish(d);};
+      s.onerror=function(){finish(null);};
+      s.src=url+"&callback="+name;
+      document.head.appendChild(s);
+    });
+  }
+  async function itunesGet(path){
+    var url=ITUNES+path, r=null;
+    var ctrl=window.AbortController?new AbortController():null;
+    var t=setTimeout(function(){if(ctrl)ctrl.abort();},8000);
+    try{r=await fetch(url,{signal:ctrl?ctrl.signal:undefined});}catch(_){}
+    finally{clearTimeout(t);}
+    if(r){
+      if(!r.ok)return null;
+      try{return await r.json();}catch(_){return null;}
+    }
+    return jsonp(url);
+  }
+  /* Returns {strict,loose} lookups of title -> preview URL; null means the request failed (worth retrying) */
+  async function itunesPreviews(artist,album){
+    var out={strict:Object.create(null),loose:Object.create(null)};
+    var term=((artist||"")+" "+(album||"")).trim();
+    var d=await itunesGet("search?term="+encodeURIComponent(term)+"&media=music&entity=album&limit=10");
+    if(!d)return null;
+    var tAlbum=norm(album), tArtist=norm(artist), best=null;
+    (d.results||[]).forEach(function(x){
+      var a=norm(x.collectionName), b=norm(x.artistName), score=0;
+      if(a&&a===tAlbum)score+=3;else if(overlaps(a,tAlbum))score+=1;
+      if(b&&b===tArtist)score+=2;else if(overlaps(b,tArtist))score+=1;
+      if(score>0&&x.collectionId&&(!best||score>best.score))best={id:x.collectionId,score:score};
+    });
+    if(!best)return out;
+    var l=await itunesGet("lookup?id="+encodeURIComponent(best.id)+"&entity=song&limit=200");
+    if(!l)return null;
+    (l.results||[]).forEach(function(x){
+      if(x.wrapperType!=="track"||!x.trackName||!/^https:\/\//.test(x.previewUrl||""))return;
+      var a=norm(x.trackName), b=loose(x.trackName);
+      if(a&&!out.strict[a])out.strict[a]=x.previewUrl;
+      if(b&&!out.loose[b])out.loose[b]=x.previewUrl;
+    });
+    return out;
+  }
+  function previewUrl(m,title){
+    var a=norm(title), b=loose(title);
+    return (a&&m.strict[a])||(b&&m.loose[b])||"";
+  }
+
+  /* one lookup per record per visit; failed lookups are forgotten so they can be retried */
+  var pvCache={};
+  function previewsFor(rec){
+    var k=keyOf(rec), e=pvCache[k];
+    if(e)return e;
+    e=pvCache[k]={map:null,p:null};
+    e.p=itunesPreviews(rec.artist,rec.album).catch(function(){return null;}).then(function(m){
+      if(m)e.map=m;else if(pvCache[k]===e)delete pvCache[k];
+    });
+    return e;
+  }
+  function attachPreviews(r){
+    if(!r||!r.album)return;
+    var e=previewsFor(r);
+    if(e.map)showPreviews(e.map);
+    else e.p.then(function(){if(e.map&&state.record===r)showPreviews(e.map);});
+  }
+  function showPreviews(m){
+    var n=0;
+    Array.prototype.forEach.call($("result").querySelectorAll(".pv"),function(b){
+      var url=previewUrl(m,b._title);
+      if(!url)return;
+      n++;b._pv=url;b.hidden=false;
+      if(url===pvUrl&&player&&!player.paused){pvBtn=b;pvPaint(b,true);}
+    });
+    var note=$("pvNote");if(note)note.hidden=!n;
+  }
+
+  /* a single shared player, so only one preview ever plays at a time */
+  var player=null, pvBtn=null, pvUrl="", pvRec=null;
+  function getPlayer(){
+    if(player)return player;
+    player=new Audio();player.preload="none";
+    player.addEventListener("ended",stopPreview);
+    player.addEventListener("error",stopPreview);
+    /* paused from outside (headphones unplugged, media keys); ignores the stale event from switching tracks */
+    player.addEventListener("pause",function(){if(player.paused)stopPreview();});
+    return player;
+  }
+  function pvPaint(btn,on){
+    btn.innerHTML=on?STOP:PLAY;btn.appendChild(el("span",null,on?"Stop":"30s"));
+    btn.setAttribute("aria-pressed",String(on));
+  }
+  function stopPreview(){
+    if(player)player.pause();
+    pvUrl="";
+    if(pvBtn){pvPaint(pvBtn,false);pvBtn=null;}
+  }
+  function togglePreview(btn){
+    var same=pvBtn===btn;
+    stopPreview();
+    if(same||!btn._pv)return;
+    var p=getPlayer(), url=btn._pv;
+    pvBtn=btn;pvUrl=url;pvPaint(btn,true);
+    p.src=url;
+    var started=p.play();
+    if(started&&started.catch)started.catch(function(){if(pvUrl===url)stopPreview();});
   }
 
   var MAX=100, remote=null, synced=false, chain=Promise.resolve(), armT=null;
@@ -527,7 +672,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
   }
   function beginScan(){
     var s={stopped:false,ctrl:window.AbortController?new AbortController():null};
-    scan=s;busy=true;setScanning(true);return s;
+    scan=s;busy=true;stopPreview();setScanning(true);return s;
   }
   function endScan(s){if(scan!==s)return;scan=null;busy=false;setScanning(false);}
   function stopScan(){
