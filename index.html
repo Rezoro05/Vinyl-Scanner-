@@ -270,7 +270,9 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       sec.appendChild(ul);box.appendChild(sec);
     });
     if(!r.example&&r.sides&&r.sides.length)
-      box.appendChild(el("p","fine","Track list comes from Claude's knowledge of the album. Your pressing may differ."));
+      box.appendChild(el("p","fine",r.src==="mb"
+        ?"Track list from MusicBrainz. Your pressing may differ."
+        :"Track list is the AI's best guess. Your pressing may differ."));
   }
 
   var MAX=100, remote=null, synced=false, chain=Promise.resolve(), armT=null;
@@ -307,7 +309,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
   }
   function addToCrate(r){
     crate=crate.filter(function(x){return keyOf(x)!==keyOf(r);});
-    var item={artist:r.artist,album:r.album,year:r.year,confidence:r.confidence,sides:r.sides,at:Date.now()};
+    var item={artist:r.artist,album:r.album,year:r.year,confidence:r.confidence,sides:r.sides,src:r.src,at:Date.now()};
     if(!synced)item.p=1;
     crate.unshift(item);crate=crate.slice(0,MAX);persist();
   }
@@ -407,6 +409,95 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     return parseJSON(out.text||"");
   }
 
+  var FORMAT_ID='Reply with JSON only, no prose: {"found":boolean,"artist":string,"album":string,"year":number|null,'+
+    '"confidence":"high"|"medium"|"low","note":string}. If you cannot tell which album it is, set found to false and say what you see in note.';
+
+  /* Track lists come from MusicBrainz, a free public music database, so they are real
+     listings rather than the AI's memory. The AI is only asked which album it is. */
+  var MB="https://musicbrainz.org/ws/2/";
+  function mbQuote(s){return '"'+String(s||"").replace(/["\\]/g," ").trim()+'"';}
+  function wait(ms){return new Promise(function(z){setTimeout(z,ms);});}
+  async function mbGet(path){
+    for(var i=0;i<3;i++){
+      var ctrl=window.AbortController?new AbortController():null;
+      var t=setTimeout(function(){if(ctrl)ctrl.abort();},8000);
+      var r;
+      try{r=await fetch(MB+path+(path.indexOf("?")<0?"?":"&")+"fmt=json",{signal:ctrl?ctrl.signal:undefined});}
+      finally{clearTimeout(t);}
+      if(r.status===503&&i<2){await wait(1300*(i+1));continue;}  /* MusicBrainz asks for about one request a second */
+      if(!r.ok)throw new Error("mb "+r.status);
+      return r.json();
+    }
+  }
+  function mbYear(d){var m=/^(\d{4})/.exec(String(d||""));return m?Number(m[1]):null;}
+  function mbAll(rel){var all=[];(rel.media||[]).forEach(function(m){(m.tracks||[]).forEach(function(t){all.push(t);});});return all;}
+  function mbLettered(rel){var all=mbAll(rel);return all.length>0&&all.every(function(t){return /^[A-Z]\d*$/i.test(String(t.number||"").trim());});}
+  function mbVinyl(rel){return (rel.media||[]).some(function(m){return /vinyl/i.test(m.format||"");});}
+  function mbSides(rel){
+    var all=mbAll(rel);
+    if(!all.length)return [];
+    if(!mbLettered(rel))return [{side:"",tracks:all.map(function(t){return String(t.title||"");}).filter(Boolean)}];
+    var sides=[],byLetter={};
+    all.forEach(function(t){
+      var L=String(t.number).trim().charAt(0).toUpperCase();
+      if(!byLetter[L]){byLetter[L]={side:L,tracks:[]};sides.push(byLetter[L]);}
+      if(t.title)byLetter[L].tracks.push(String(t.title));
+    });
+    return sides;
+  }
+  async function mbTracks(artist,album){
+    /* 1) find the album itself (the "release group"), not one particular pressing */
+    var q="releasegroup:"+mbQuote(album)+(artist?" AND artist:"+mbQuote(artist):"");
+    var d=await mbGet("release-group?limit=10&query="+encodeURIComponent(q));
+    var groups=(d&&d["release-groups"])||[];
+    if(!groups.length||(groups[0].score||0)<85)return null;
+    var top=groups[0].score||0;
+    groups=groups.filter(function(g){return (g.score||0)>=top-5;});
+    groups.sort(function(a,b){
+      return ((a["primary-type"]==="Album"?0:1)-(b["primary-type"]==="Album"?0:1))||
+        ((mbYear(a["first-release-date"])||9999)-(mbYear(b["first-release-date"])||9999));
+    });
+    var g=groups[0];
+    await wait(1100);
+    /* 2) among its pressings, prefer a vinyl one with A/B side numbering, official, earliest */
+    var r=await mbGet("release?release-group="+encodeURIComponent(g.id)+"&inc=recordings&limit=50");
+    var rels=((r&&r.releases)||[]).filter(function(x){return mbAll(x).length;});
+    if(!rels.length)return null;
+    rels.sort(function(a,b){
+      return ((mbLettered(a)?0:1)-(mbLettered(b)?0:1))||
+        ((mbVinyl(a)?0:1)-(mbVinyl(b)?0:1))||
+        ((a.status==="Official"?0:1)-(b.status==="Official"?0:1))||
+        ((mbYear(a.date)||9999)-(mbYear(b.date)||9999));
+    });
+    var sides=mbSides(rels[0]);
+    if(!sides.length)return null;
+    return {sides:sides,year:mbYear(g["first-release-date"])||mbYear(rels[0].date)};
+  }
+
+  var tracksFor=null;
+  async function loadTracks(rec){
+    tracksFor=rec;
+    setStatus("Finding the track list\u2026");
+    var oldKey=keyOf(rec), got=null;
+    try{got=await mbTracks(rec.artist,rec.album);}catch(_){}
+    if(got){
+      rec.sides=got.sides;rec.src="mb";if(!rec.year&&got.year)rec.year=got.year;
+    }else if(state.record===rec){
+      /* MusicBrainz had nothing: fall back to the AI's best guess */
+      try{
+        var r=await ask('Album: "'+rec.album+'"'+(rec.artist?' by "'+rec.artist+'"':'')+". Fill in its details. "+FORMAT);
+        if(r&&r.found){
+          var c=clean(r);rec.sides=c.sides;rec.src="ai";
+          if(c.album)rec.album=c.album;if(c.artist)rec.artist=c.artist;if(!rec.year&&c.year)rec.year=c.year;
+        }
+      }catch(_){}
+    }
+    if(tracksFor===rec){tracksFor=null;setStatus(rec.sides&&rec.sides.length?"":"Couldn't find a track list for this one.");}
+    crate=crate.filter(function(x){return keyOf(x)!==oldKey;});
+    addToCrate(rec);
+    if(state.record===rec)render();else renderCrate();
+  }
+
   async function ask(prompt,images,signal){
     var sample=window.claude&&window.claude.use?await window.claude.use("sample"):null;
     if(!sample&&RELAY)return askRelay(prompt,images,signal);
@@ -447,8 +538,9 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       if(!r.found||!r.album){
         setStatus("Couldn't tell which record that is"+(r.note?" ("+String(r.note).slice(0,140)+")":"")+". Try a straighter, brighter shot, or type it in.",true);
       }else{
-        state.record=clean(r);addToCrate(state.record);setStatus("");render();
+        var rec=clean(r);rec.sides=[];state.record=rec;addToCrate(rec);render();
         var res=$("result");if(res.scrollIntoView)res.scrollIntoView({behavior:"smooth",block:"nearest"});
+        loadTracks(rec);
       }
     }catch(e){
       if(s.stopped)return;
@@ -472,7 +564,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     if(state.photo)try{URL.revokeObjectURL(state.photo);}catch(_){}
     state.photo=URL.createObjectURL(blob);state.record=null;renderSleeve();$("result").textContent="";
     setStatus("Looking through the crates…");
-    await identify("This is a photo of a record cover. Identify the album. "+FORMAT,[blob],s);
+    await identify("This is a photo of a record cover. Identify the album. "+FORMAT_ID,[blob],s);
   }
 
   function openManual(){$("manual").classList.add("open");$("typeBtn").setAttribute("aria-expanded","true");}
@@ -494,13 +586,7 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
     state.photo=null;
     state.record={artist:artist,album:album,year:null,confidence:"high",sides:[]};
     addToCrate(state.record);render();
-    setStatus("Fetching the track list…");
-    var before=state.record;
-    try{
-      var r=await ask('Album: "'+album+'"'+(artist?' by "'+artist+'"':'')+". Fill in its details. "+FORMAT);
-      if(r.found&&state.record===before){state.record=clean(r);addToCrate(state.record);render();}
-      setStatus("");
-    }catch(_){setStatus("");}
+    loadTracks(state.record);
   });
   function buildSvcs(){
     var box=$("svcs");box.textContent="";
