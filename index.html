@@ -129,6 +129,10 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
 .tracks a{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 2px;text-decoration:none}
 .tracks .pos{font-family:var(--display);font-weight:800;font-size:18px;width:2.2em;flex:none;font-variant-numeric:tabular-nums;color:var(--muted)}
 .tracks .name{flex:1;font-weight:500;overflow-wrap:anywhere}
+/* tempo tag: plain number = Deezer's figure, "≈" = estimated from the 30-second sample */
+.tracks .bpm{flex:none;display:inline-flex;align-items:baseline;gap:3px;padding:2px 8px;border:1.5px solid var(--line);border-radius:999px;font:600 13px var(--body);font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap}
+.tracks .bpm small{font-size:10px;font-weight:600;letter-spacing:.08em;color:var(--muted)}
+.tracks .bpm.est{border-style:dashed}
 .btn svg{width:12px;height:12px;fill:currentColor}
 .tracks .pv{flex:none;display:grid;place-items:center;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:var(--ink);color:var(--paper);cursor:pointer}
 .tracks .pv svg{width:12px;height:12px;fill:currentColor}
@@ -323,7 +327,8 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
         a.setAttribute("aria-label","Open "+t+" on "+svc.name);
         a.appendChild(el("span","pos",(letter||"")+(i+1)));
         a.appendChild(el("span","name",t));
-        var pv=el("button","pv");pv.type="button";pv.hidden=true;pv._title=t;
+        var bp=el("span","bpm");bp.hidden=true;a.appendChild(bp);
+        var pv=el("button","pv");pv.type="button";pv.hidden=true;pv._title=t;pv._bpm=bp;
         pv.setAttribute("aria-label","Play a 30 second sample of "+t);
         pvPaint(pv,false);
         pv.addEventListener("click",function(){togglePreview(pv);});
@@ -342,7 +347,9 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
         ?"Track list from MusicBrainz. Your pressing may differ."
         :"Track list is the AI's best guess. Your pressing may differ."));
     var note=el("p","fine","Play buttons are 30-second samples from Apple Music. Tracks without a sample get a button that opens them on "+svc.name+".");note.id="pvNote";note.hidden=true;box.appendChild(note);
+    var bn=el("p","fine");bn.id="bpmNote";bn.hidden=true;box.appendChild(bn);
     attachPreviews(r);
+    attachBpm(r);
   }
 
   /* ---- 30-second previews ----
@@ -448,6 +455,197 @@ form.manual button{min-height:44px;padding:8px 16px;border-radius:12px;border:2p
       if(url===pvUrl&&player&&!player.paused){pvBtn=b;pvPaint(b,true);}
     });
     var note=$("pvNote");if(note)note.hidden=!n;
+  }
+
+
+  /* ---- BPM ----
+     1) Deezer's public API lists a BPM for many tracks (no key; JSONP, since it has no CORS).
+     2) Tracks Deezer has no BPM for get an estimate worked out here in the browser from the
+        30-second sample: find the beats (sudden jumps in loudness), then the gap that repeats most. */
+  var DZ="https://api.deezer.com/";
+  async function dzGet(path){
+    for(var i=0;i<2;i++){
+      var d=await jsonp(DZ+path+(path.indexOf("?")<0?"?":"&")+"output=jsonp");
+      if(d&&d.error&&d.error.code===4&&i<1){await wait(1500);continue;}  /* Deezer: too many requests */
+      return d&&!d.error?d:null;
+    }
+  }
+  /* Returns {strict,loose} lookups of title -> {bpm,pv}; null means the request failed */
+  async function dzBpms(artist,album){
+    var out={strict:Object.create(null),loose:Object.create(null)};
+    var q=(artist?'artist:"'+artist.replace(/"/g," ")+'" ':'')+'album:"'+album.replace(/"/g," ")+'"';
+    var d=await dzGet("search/album?q="+encodeURIComponent(q)+"&limit=10");
+    if(!d)return null;
+    var list=d.data||[];
+    if(!list.length){
+      d=await dzGet("search/album?q="+encodeURIComponent(((artist||"")+" "+album).trim())+"&limit=10");
+      if(!d)return null;list=d.data||[];
+    }
+    var tAlbum=norm(album), tArtist=norm(artist), best=null;
+    list.forEach(function(x){
+      var a=norm(x.title), b=norm(x.artist&&x.artist.name), score=0;
+      if(a&&a===tAlbum)score+=3;else if(overlaps(a,tAlbum))score+=1;
+      if(b&&b===tArtist)score+=2;else if(overlaps(b,tArtist))score+=1;
+      if(score>0&&x.id&&(!best||score>best.score))best={id:x.id,score:score};
+    });
+    if(!best)return out;
+    var t=await dzGet("album/"+encodeURIComponent(best.id)+"/tracks?limit=100");
+    if(!t)return null;
+    var tracks=(t.data||[]).filter(function(x){return x&&x.id&&x.title;}), next=0;
+    function put(title,v){
+      var a=norm(title), b=loose(title);
+      if(a&&!out.strict[a])out.strict[a]=v;
+      if(b&&!out.loose[b])out.loose[b]=v;
+    }
+    /* the album list has no BPM, so each track is looked up; a few at a time to stay under Deezer's limit */
+    async function worker(){
+      while(next<tracks.length){
+        var x=tracks[next++], full=await dzGet("track/"+encodeURIComponent(x.id));
+        var bpm=full?Math.round(Number(full.bpm)||0):0;
+        var v={bpm:bpm>=40&&bpm<=250?bpm:0,pv:/^https:\/\//.test(x.preview||"")?x.preview:""};
+        put(x.title,v);if(x.title_short)put(x.title_short,v);
+      }
+    }
+    await Promise.all([worker(),worker(),worker(),worker()]);
+    return out;
+  }
+  var dzCache={};
+  function dzFor(rec){
+    var k=keyOf(rec), e=dzCache[k];
+    if(e)return e;
+    e=dzCache[k]={map:null,p:null};
+    e.p=dzBpms(rec.artist,rec.album).catch(function(){return null;}).then(function(m){
+      if(m)e.map=m;else if(dzCache[k]===e)delete dzCache[k];
+    });
+    return e;
+  }
+
+  /* known BPMs are kept on the device, so a record opened again shows them at once */
+  var bpmStore=load("vynil.bpm",{});if(!bpmStore||typeof bpmStore!=="object")bpmStore={};
+  var bpmTried={}, bpmChain=Promise.resolve();
+  function bpmKey(rec,title){return keyOf(rec)+"|"+loose(title);}
+  function bpmPut(k,v){
+    if(bpmStore[k]&&bpmStore[k].v===v.v&&!bpmStore[k].e===!v.e)return;
+    delete bpmStore[k];bpmStore[k]=v;
+    var keys=Object.keys(bpmStore);
+    if(keys.length>3000)keys.slice(0,500).forEach(function(x){delete bpmStore[x];});
+    save("vynil.bpm",bpmStore);
+  }
+  function bpmInfo(rec,title){
+    var e=dzCache[keyOf(rec)], d=e&&e.map?previewUrl(e.map,title):null, k=bpmKey(rec,title);
+    if(d&&d.bpm){bpmPut(k,{v:d.bpm});return bpmStore[k];}
+    return bpmStore[k]||null;
+  }
+  function paintBpm(rec){
+    var exact=0, est=0;
+    Array.prototype.forEach.call($("result").querySelectorAll(".pv"),function(b){
+      var tag=b._bpm;if(!tag)return;
+      var info=bpmInfo(rec,b._title);
+      if(!info||!info.v){tag.hidden=true;return;}
+      tag.textContent="";
+      tag.appendChild(document.createTextNode((info.e?"≈":"")+info.v));
+      tag.appendChild(el("small",null,"BPM"));
+      tag.className="bpm"+(info.e?" est":"");
+      tag.title=info.e?"Estimated from the 30-second sample":"Tempo from Deezer";
+      tag.hidden=false;
+      if(info.e)est++;else exact++;
+    });
+    var n=$("bpmNote");if(!n)return;
+    n.hidden=!(exact||est);
+    n.textContent=exact&&est?"BPM from Deezer. ≈ means estimated from the 30-second sample, so it can be off, often by half or double."
+      :est?"≈ BPM is estimated from the 30-second sample, so it can be off, often by half or double."
+      :"BPM from Deezer.";
+  }
+  function attachBpm(r){
+    if(!r||!r.album||!(r.sides&&r.sides.length))return;
+    paintBpm(r);
+    var d=dzFor(r), p=previewsFor(r);
+    Promise.all([d.p,p.p]).then(function(){
+      if(state.record!==r)return;
+      paintBpm(r);
+      queueEstimates(r,p.map||NOPV,d.map);
+    });
+  }
+  function queueEstimates(r,pvMap,dzMap){
+    (r.sides||[]).forEach(function(side){(side.tracks||[]).forEach(function(t){
+      var k=bpmKey(r,t);
+      if(bpmTried[k]||bpmInfo(r,t))return;
+      var dz=dzMap?previewUrl(dzMap,t):null;
+      var urls=[previewUrl(pvMap,t),dz&&dz.pv].filter(Boolean);
+      if(!urls.length)return;
+      bpmTried[k]=1;
+      bpmChain=bpmChain.then(async function(){
+        if(state.record!==r){delete bpmTried[k];return;}  /* another record is open: try again when this one is */
+        var v=0;
+        for(var i=0;i<urls.length&&!v;i++){try{v=await estimateBpm(urls[i]);}catch(_){}}
+        if(v){bpmPut(k,{v:v,e:1});if(state.record===r)paintBpm(r);}
+      });
+    });});
+  }
+
+  async function estimateBpm(url){
+    var AC=window.OfflineAudioContext||window.webkitOfflineAudioContext;
+    if(!AC)return 0;
+    var ctrl=window.AbortController?new AbortController():null;
+    var t=setTimeout(function(){if(ctrl)ctrl.abort();},15000), buf;
+    try{
+      var res=await fetch(url,{signal:ctrl?ctrl.signal:undefined});
+      if(!res.ok)return 0;
+      buf=await res.arrayBuffer();
+    }finally{clearTimeout(t);}
+    var SR=22050, ctx=new AC(1,SR,SR);
+    var audio=await new Promise(function(ok,no){
+      var p=ctx.decodeAudioData(buf,ok,no);  /* older Safari only has the callback form */
+      if(p&&p.then)p.then(ok,no);
+    });
+    var n=audio.length, ch=audio.numberOfChannels, x=new Float32Array(n);
+    for(var c=0;c<ch;c++){var d=audio.getChannelData(c);for(var i=0;i<n;i++)x[i]+=d[i]/ch;}
+    await wait(0);  /* let the page breathe between decoding and counting */
+    return tempoOf(x,audio.sampleRate);
+  }
+  function tempoOf(x,sr){
+    var hop=Math.max(1,Math.round(sr/100)), win=hop*2, F=Math.floor((x.length-win)/hop);
+    if(F<500)return 0;  /* under ~5 seconds of sound: too little to tell */
+    /* loudness of the "attack" part of the sound (hats, snares, kicks), frame by frame */
+    var le=new Float32Array(F);
+    for(var f=0;f<F;f++){
+      var s=0,o=f*hop;
+      for(var j=1;j<win;j++){var y=x[o+j]-0.97*x[o+j-1];s+=y*y;}
+      le[f]=Math.log(1e-9+s);
+    }
+    /* onset strength: how much louder this frame is than the last, minus the local average */
+    var on=new Float32Array(F), half=25;
+    for(f=1;f<F;f++)on[f]=Math.max(0,le[f]-le[f-1]);
+    var sm=new Float32Array(F), acc=0;
+    for(f=0;f<F;f++){
+      acc+=on[f];if(f-2*half-1>=0)acc-=on[f-2*half-1];
+      sm[Math.max(0,f-half)]=acc/(2*half+1);
+    }
+    for(f=0;f<F;f++)on[f]=Math.max(0,on[f]-sm[f]);
+    /* how well the beat pattern lines up with itself shifted by each gap */
+    var fps=sr/hop, lo=Math.floor(fps*60/200), hi=Math.ceil(fps*60/60);
+    function ac(L){var s=0;for(var f=0;f+L<F;f++)s+=on[f]*on[f+L];return s/(F-L);}
+    var A=[], mean=0;
+    for(var L=Math.max(1,Math.floor(lo/2)-1);L<=hi*2+1&&L<F/2;L++){A[L]=ac(L);}
+    function pk(L){return Math.max(A[L-1]||0,A[L]||0,A[L+1]||0);}
+    var best=0,bestL=0,cnt=0;
+    for(L=lo;L<=hi;L++){
+      if(A[L]==null)break;
+      mean+=A[L];cnt++;
+      var bpm=60*fps/L;
+      /* favour tempos people usually count in (around 120), and gaps whose double and half also line up */
+      var w=Math.exp(-0.5*Math.pow(Math.log2(bpm/120)/1.0,2));
+      var s=(pk(L)+0.5*pk(2*L)+0.5*pk(Math.round(L/2)))*w;
+      if(s>best){best=s;bestL=L;}
+    }
+    if(!bestL||!cnt)return 0;
+    mean/=cnt;
+    if(pk(bestL)<mean*2)return 0;  /* no clear beat (ambient, free-time jazz…) */
+    /* refine between frames */
+    var a=A[bestL-1]||A[bestL], b=A[bestL], c=A[bestL+1]||A[bestL], den=a-2*b+c;
+    var Lr=bestL+(den<0?0.5*(a-c)/den:0);
+    var out=Math.round(60*fps/Lr);
+    return out>=50&&out<=220?out:0;
   }
 
   /* a single shared player, so only one preview ever plays at a time */
