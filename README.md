@@ -9,6 +9,7 @@ Photograph a record cover and get the album, its track list by side (A1, B2…),
 - **Scan a cover** with the phone camera, pick a photo, or type the artist and album.
 - **Play on** Spotify, Apple Music, YouTube Music, YouTube, Amazon Music, Tidal, Deezer, SoundCloud or Bandcamp. Switch platform without rescanning.
 - **30-second previews** next to each track, from Apple's public iTunes Search API. One plays at a time.
+- **BPM** for each track. Taken from Deezer's public API when it has one; otherwise estimated in the browser from the 30-second sample and shown with ≈ (estimates can be off by half or double). Known BPMs are saved on the device.
 - **History** of the last 100 records, with the date scanned. Tap one to reopen it.
 
 ## Install on a phone
